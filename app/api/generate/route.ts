@@ -1,48 +1,8 @@
 export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 
-export interface ResumeAnalysis {
-  score: number;
-  missingSkills: string[];
-  improvements: string[];
-  aiRewrittenBullets: string[];
-}
-
-export interface RoadmapItem {
-  year: string;
-  milestone: string;
-  skills: string[];
-  action: string;
-}
-
-export interface StudyPlannerItem {
-  day: string;
-  topic: string;
-  task: string;
-}
-
-export interface ProjectItem {
-  title: string;
-  difficulty: "Easy" | "Medium" | "Hard";
-  tech: string;
-  description: string;
-}
-
-export interface MockInterviewItem {
-  id: number;
-  question: string;
-  hint: string;
-  answer: string;
-}
-
-export interface CareerAnalysisResponse {
-  careerReadinessScore: number;
-  resumeAnalysis: ResumeAnalysis;
-  roadmap: RoadmapItem[];
-  studyPlanner: StudyPlannerItem[];
-  projects: ProjectItem[];
-  mockInterviews: MockInterviewItem[];
-}
+/* ---------------- TYPES ---------------- */
 
 interface GenerateRequestBody {
   year: string;
@@ -53,145 +13,173 @@ interface GenerateRequestBody {
   resumeText: string;
 }
 
+/* ---------------- CONFIG ---------------- */
+
+const MODEL = "gemini-1.5-flash";
+
 const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+
+/* ---------------- PROMPT ---------------- */
 
 function buildPrompt(body: GenerateRequestBody): string {
-  return `You are PathPilot AI, an elite student career copilot. Analyze the student profile and resume, then return a comprehensive career action plan.
+  return `
+You are PathPilot AI, a FAANG-level resume evaluator.
 
-STUDENT PROFILE:
-- Academic Year: ${body.year}
-- Department: ${body.department}
-- Dream Company: ${body.company}
-- Target Role: ${body.role}
-- Current Skills: ${body.skills}
+RULES:
+- Be strict and realistic
+- No generic advice
+- Focus: DSA, System Design, Projects, ATS
+- If resume is weak → low score
 
-RESUME TEXT:
-${body.resumeText || "(No resume provided — infer gaps from profile and target role)"}
+OUTPUT MUST BE VALID JSON ONLY.
 
-Return ONLY valid JSON matching this exact schema (no markdown, no extra keys):
+Keep response under 2000 tokens.
+
+STUDENT:
+Year: ${body.year}
+Dept: ${body.department}
+Company: ${body.company}
+Role: ${body.role}
+Skills: ${body.skills}
+
+RESUME:
+${body.resumeText || "EMPTY"}
+
+Return JSON only:
 {
-  "careerReadinessScore": <number 0-100>,
+  "careerReadinessScore": number,
   "resumeAnalysis": {
-    "score": <number 0-100>,
-    "missingSkills": [<strings>],
-    "improvements": [<strings>],
-    "aiRewrittenBullets": [<3-5 improved resume bullet strings>]
+    "score": number,
+    "missingSkills": string[],
+    "improvements": string[],
+    "aiRewrittenBullets": string[]
   },
-  "roadmap": [
-    { "year": "<year label>", "milestone": "<title>", "skills": [<strings>], "action": "<concrete action>" }
-  ],
-  "studyPlanner": [
-    { "day": "<Day 1 etc>", "topic": "<topic>", "task": "<specific task>" }
-  ],
-  "projects": [
-    { "title": "<name>", "difficulty": "Easy"|"Medium"|"Hard", "tech": "<stack>", "description": "<2-3 sentences>" }
-  ],
-  "mockInterviews": [
-    { "id": <number>, "question": "<question>", "hint": "<hint>", "answer": "<reference answer>" }
-  ]
+  "roadmap": [],
+  "studyPlanner": [],
+  "projects": [],
+  "mockInterviews": []
+}
+`;
 }
 
-Requirements:
-- careerReadinessScore reflects overall fit for ${body.role} at ${body.company}
-- resumeAnalysis.score is resume quality vs target role
-- roadmap: 4-6 milestones aligned to ${body.year} student timeline toward ${body.role}
-- studyPlanner: exactly 7 days of focused learning
-- projects: exactly 6 portfolio projects (mix of Easy/Medium/Hard)
-- mockInterviews: exactly 5 questions for ${body.role} at ${body.company}
-- Be specific, actionable, and tailored to ${body.department} students`;
+/* ---------------- FALLBACK ---------------- */
+
+function fallbackResponse() {
+  return {
+    careerReadinessScore: 50,
+    resumeAnalysis: {
+      score: 50,
+      missingSkills: ["Data Structures", "System Design", "GitHub"],
+      improvements: ["Improve resume structure", "Add real projects"],
+      aiRewrittenBullets: [
+        "Built Python-based problem solving projects",
+        "Practiced DSA regularly on coding platforms",
+        "Improved logical thinking through hands-on coding"
+      ]
+    },
+    roadmap: [
+      {
+        phase: "DSA Phase",
+        milestone: "Master Arrays to Graphs",
+        skills: ["Arrays", "Linked List", "Trees"],
+        action: "Solve 50–100 LeetCode problems"
+      }
+    ],
+    studyPlanner: [
+      { day: "Day 1", topic: "Arrays", task: "Solve 10 problems" },
+      { day: "Day 2", topic: "Strings", task: "Practice problems" },
+      { day: "Day 3", topic: "Linked List", task: "Implement + problems" }
+    ],
+    projects: [
+      {
+        title: "Resume Analyzer",
+        difficulty: "Medium",
+        tech: "Next.js + API",
+        description: "AI-based resume scoring system"
+      }
+    ],
+    mockInterviews: [
+      {
+        id: 1,
+        question: "Explain time complexity of sorting algorithms",
+        hint: "Compare best/worst case",
+        answer: "Depends on algorithm like merge sort O(n log n)"
+      }
+    ],
+    fallback: true
+  };
 }
 
-function parseGeminiJson(raw: string): CareerAnalysisResponse {
-  const cleaned = raw
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
+/* ---------------- SAFE PARSER ---------------- */
 
-  const parsed = JSON.parse(cleaned) as CareerAnalysisResponse;
+function safeParse(text: string) {
+  try {
+    const cleaned = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
 
-  if (
-    typeof parsed.careerReadinessScore !== "number" ||
-    !parsed.resumeAnalysis ||
-    !Array.isArray(parsed.roadmap) ||
-    !Array.isArray(parsed.studyPlanner) ||
-    !Array.isArray(parsed.projects) ||
-    !Array.isArray(parsed.mockInterviews)
-  ) {
-    throw new Error("Invalid response structure from Gemini");
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+
+    if (start === -1 || end === -1) return fallbackResponse();
+
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return fallbackResponse();
   }
-
-  return parsed;
 }
+
+/* ---------------- GEMINI CALL ---------------- */
+
+async function callGemini(payload: any, apiKey: string) {
+  try {
+    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) return null;
+
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- MAIN API ---------------- */
 
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured" },
-        { status: 500 }
-      );
+
+    const body: GenerateRequestBody = await request.json();
+
+    if (!apiKey) return NextResponse.json(fallbackResponse(), { status: 200 });
+
+    if (!body?.resumeText || body.resumeText.length < 20) {
+      body.resumeText = "EMPTY RESUME";
     }
 
-    const body = (await request.json()) as GenerateRequestBody;
-
-    if (!body.year || !body.department || !body.company || !body.role) {
-      return NextResponse.json(
-        { error: "Missing required fields: year, department, company, role" },
-        { status: 400 }
-      );
-    }
-
-    const response = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: buildPrompt(body) }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.7,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Gemini API error:", errorText);
-      return NextResponse.json(
-        { error: "Failed to generate career analysis" },
-        { status: 502 }
-      );
-    }
-
-    const geminiData = (await response.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
+    const payload = {
+      contents: [{ parts: [{ text: buildPrompt(body) }] }],
+      generationConfig: {
+        temperature: 0.4,
+        responseMimeType: "application/json",
+      },
     };
 
-    const textContent =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const gemini = await callGemini(payload, apiKey);
 
-    if (!textContent) {
-      return NextResponse.json(
-        { error: "Empty response from Gemini" },
-        { status: 502 }
-      );
-    }
+    const text =
+      gemini?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    const analysis = parseGeminiJson(textContent);
-    return NextResponse.json(analysis);
-  } catch (error) {
-    console.error("Generate route error:", error);
-    return NextResponse.json(
-      { error: "Something went wrong. Please try again." },
-      { status: 500 }
-    );
+    return NextResponse.json(safeParse(text));
+  } catch {
+    return NextResponse.json(fallbackResponse(), { status: 200 });
   }
 }
